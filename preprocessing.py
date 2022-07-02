@@ -5,7 +5,7 @@ import random
 import cv2
 import os
 
-train_dir = './base'
+train_dir = './train'
 Classes = ['closed', 'open']
 img_size = 128
 
