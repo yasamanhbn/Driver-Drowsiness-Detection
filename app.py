@@ -4,14 +4,12 @@ import sys
 from tensorflow import keras
 from keras.models import load_model
 import numpy as np
-from pygame import mixer
-import multiprocessing
 from playsound import playsound
 import time
 import tkinter as tk
-
-e = multiprocessing.Event()
-p = None
+from tkinter import filedialog as fd
+import PIL.Image, PIL.ImageTk
+from datetime import datetime
 
 
 if getattr(sys, 'frozen', False):
@@ -19,121 +17,216 @@ if getattr(sys, 'frozen', False):
 elif __file__:
     THIS_FOLDER = os.path.dirname(__file__)
 
-capturing = False
-def startCapture():
-    global capturing
-    capturing = not capturing
+class App:
+    def __init__(self, window, window_title, video_source=0):
+        BGCOLOR = '#ccf5ff'
+        self.window = window
+        self.window.configure(bg=BGCOLOR)
+        self.alarmFilePath = ''
+        ws = self.window.winfo_screenwidth() 
+        hs = self.window.winfo_screenheight()
+        w = int(ws)
+        h = int(hs * 0.9)
+        self.window.geometry("{}x{}".format(w,h)) #set window size
+        x = (ws/2) - (w/2)
+        self.window.geometry('+%d+%d' % (x, 0))
+        self.window.title(window_title)
+        self.video_source = video_source
+        self.ok = False
+
+        # open video source (by default this will try to open the computer webcam)
+        self.videoCap = VideoCapture(self.video_source)
+
+        # Radio buttons
+        radio_Frame = tk.Frame(window, bg='#ccf5ff')
+        radio_Frame.pack(side=tk.RIGHT, padx=20, anchor=tk.E)
+        tk.Label(
+            radio_Frame, 
+            text="می‌توانید حد آستانه زنگ هشدار را تغییر دهید", 
+            bg='#ccf5ff').pack(side=tk.TOP, padx=5)
+
+        values= ["550", "600", "650"]
+        self.v = tk.IntVar(value=600)
+        for val in values:
+            tk.Radiobutton(radio_Frame, 
+                text=val,
+                bg=BGCOLOR,
+                variable=self.v,
+                value=val).pack(side=tk.RIGHT, padx=5)
+
+        alarm_Frame = tk.Frame(window, bg='#ccf5ff')
+        alarm_Frame.pack(side=tk.LEFT, padx=10)
+        # 
+        tk.Label(
+            alarm_Frame,
+            text="در این قسمت می توانید زنگ هشدار مورد نظر خود", 
+            bg='#ccf5ff').pack()
+            
+        tk.Label(
+            alarm_Frame, 
+            text="را انتخاب کنید. در صورتی که زنگی انتخاب نکنید", 
+            bg='#ccf5ff').pack()
+
+        tk.Label(
+            alarm_Frame, 
+            text="از زنگ هشدار پیش فرض استفاده خواهد شد", 
+            bg='#ccf5ff').pack()
+
+        tk.Button(
+            alarm_Frame, 
+            bg='#98e6e6', 
+            text='انتخاب فایل', 
+            bd=0,
+            command=self.openFile, 
+            height = 2, 
+            width = 8
+        ).pack(pady = 5)
+
+        # Create a canvas that can fit the above video source size
+        self.canvas = tk.Canvas(window, width = w * 0.5, height = h * 0.7, bg=BGCOLOR)
+        self.canvas.pack(side=tk.TOP)
 
 
+        #
+        start_cancel = tk.Frame(window, bg=BGCOLOR)
+        start_cancel.pack(side='bottom')
 
-model = load_model(os.path.join(THIS_FOLDER, 'cnnBasic.h5'))
+        #video control buttons
 
-faceCascade = cv2.CascadeClassifier(os.path.join(THIS_FOLDER, 'haarcascade_frontalface_default.xml'))
-eye_cascade_main = cv2.CascadeClassifier(os.path.join(THIS_FOLDER, 'haarcascade_eye.xml'))
-eye_cascade_backup = cv2.CascadeClassifier(os.path.join(THIS_FOLDER, 'haarcascade_righteye_2splits.xml'))
+        self.btn_quit=tk.Button(start_cancel, bd=0, bg='#98e6e6', text='پایان', command=sys.exit, height = 3, width = 7)
+        self.btn_quit.pack(side=tk.LEFT, padx=10, pady=10)
 
-img_size = 128
+        self.btn_stop=tk.Button(start_cancel, bd=0, bg='#98e6e6', text='توقف', command=self.close_camera, height = 3, width = 7)
+        self.btn_stop.pack(side=tk.LEFT, padx=10, pady=10)
 
-def preprocessing(frame, roi_gray,roi_color, score):
-    eye_cascade = eye_cascade_main
-    eyes = eye_cascade.detectMultiScale(roi_gray, scaleFactor=1.2, minNeighbors=5)
+        self.btn_start=tk.Button(start_cancel, bd=0, bg='#98e6e6', text='شروع', command=self.open_camera, height = 3, width = 7)
+        self.btn_start.pack(side=tk.LEFT, padx=10, pady=10)
+
+       
+
+
+        # After it is called once, the update method will be automatically called every delay milliseconds
+        self.delay=10
+        self.window.mainloop()
+
+
+    def openFile(self):
+        self.alarmFilePath = fd.askopenfilename()
+
+
+    def open_camera(self):
+        self.ok = True
+        self.videoCap.prev = datetime.now()
+        self.update()
+        # print("camera opened => Recording")
+
+
+    def close_camera(self):
+        self.ok = False
+        print("camera closed => Not Recording")
+
+       
+    def update(self):
+        # Get a frame from the video source
+        if self.ok:
+            ret, frame = self.videoCap.get_frame(self.v.get(), self.alarmFilePath)
+
+            if ret:
+                self.photo = PIL.ImageTk.PhotoImage(image = PIL.Image.fromarray(frame))
+                self.canvas.create_image(0, 0, image = self.photo, anchor = tk.NW)
+            self.window.after(self.delay, self.update)
+
+
+class VideoCapture:
+    def __init__(self, video_source=0):
+        self.cap = cv2.VideoCapture(video_source)
+        if not self.cap.isOpened():
+            raise ValueError("Unable to open video source", video_source)
+        self.score = False
+        self.img_size = 128
+        self.model = load_model(os.path.join(THIS_FOLDER, 'data/cnnBasic.h5'))
+        self.faceCascade = cv2.CascadeClassifier(os.path.join(THIS_FOLDER, 'data/haarcascade_frontalface_default.xml'))
+        self.eye_cascade_main = cv2.CascadeClassifier(os.path.join(THIS_FOLDER, 'data/haarcascade_righteye_2splits.xml'))
+        self.eye_cascade_backup = cv2.CascadeClassifier(os.path.join(THIS_FOLDER, 'data/haarcascade_lefteye_2splits.xml'))
+        self.prev = datetime.now()
+
+    def preprocessing(self, frame, roi_gray,roi_color, score):
+        eye_cascade = self.eye_cascade_main
+        eyes = eye_cascade.detectMultiScale(roi_gray, scaleFactor=1.2, minNeighbors=5)
     
     #change eye_cascade if couldn't detcet eye with current eye_cascade
-    if(len(eyes)==0):
-        eye_cascade = eye_cascade_backup
-        eyes = eye_cascade.detectMultiScale(roi_gray, scaleFactor=1.2, minNeighbors=5)
-        
-    for (ex,ey,ew,eh) in eyes: #green
-        eye = roi_color[ey:ey+eh, ex:ex+ew]
-        eye = cv2.resize(eye, (img_size, img_size))
+        if(len(eyes)==0):
+            eye_cascade = self.eye_cascade_backup
+            eyes = eye_cascade.detectMultiScale(roi_gray, scaleFactor=1.2, minNeighbors=5)
 
-        cv2.rectangle(roi_color,(ex, ey),(ex+ew, ey+eh),(0,255,0), 2)
-        eye = np.expand_dims(eye, axis=0)
-        eye= eye / 255
-        
-        score = prediction(frame, eye, score)
-        break
-        
-    return score
+        for (ex,ey,ew,eh) in eyes: #green
+            eye = roi_color[ey:ey+eh, ex:ex+ew]
+            eye = cv2.resize(eye, (self.img_size, self.img_size))
 
-def prediction(frame, eye, score):
-    prediction = model.predict(eye)
-    if(prediction[0][0]> 0.5):
-        cv2.putText(frame, 'Open', (0, -10), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 2)
-        return False
-    else:
-        cv2.putText(frame, 'Close', (0, -10), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 2) 
-        return True
+            cv2.rectangle(roi_color,(ex, ey),(ex+ew, ey+eh),(0,255,0), 2)
+            eye = np.expand_dims(eye, axis=0)
+            eye= eye / 255
 
-from datetime import datetime
-capturing = True
-cap = cv2.VideoCapture(0)
-def captureVideo():
-    global capturing
-    global cap
-    
-    score = 0
-    prev = datetime.now()
-    while capturing:
-        cur_time = datetime.now()
-        ret, frame = cap.read()
-        time_elapsed = (cur_time - prev).total_seconds() * 1000
-        # add GaussianBlur to remove noises
-        frame = cv2.GaussianBlur(frame, (1, 1), 0)
-        height,width = frame.shape[:2] 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = faceCascade.detectMultiScale(gray, minNeighbors=5,scaleFactor=1.1)
-        cv2.rectangle(frame, (0,height-50) , (200,height) , (0,0,0) , thickness=cv2.FILLED )
-
-        for (x,y,w,h) in faces:
-            cv2.rectangle(frame, (x,y), (x+w,y+h), (255,0,0), 2)
-            roi_gray = gray[y:y+h, x:x+w]
-            roi_color = frame[y:y+h, x:x+w]
-            score = preprocessing(frame, roi_gray, roi_color, score)
-            if not score:
-                prev = datetime.now()
-            if time_elapsed > 650 and score:
-                print("sleep")
-                prev = datetime.now()
-                score = False
-                playsound(os.path.join(THIS_FOLDER, 'alarm.wav'))
+            self.score = self.prediction(frame, eye, score)
             break
+        
+        return self.score
 
-        cv2.imshow('h', frame)
+    def prediction(self, frame, eye, score):
+        prediction = self.model.predict(eye)
+        if(prediction[0][0]> 0.5):
+            cv2.putText(frame, 'Open', (100, 100), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 2)
+            return False
+        else:
+            cv2.putText(frame, 'Close', (100, 100), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 2) 
+            return True
 
-        if cv2.waitKey(2) & 0xFF == ord('q'):
-          cap.release()
-          cv2.destroyAllWindows()
-          break
+        # To get frames
+    def get_frame(self, threshold, alarmFilePath):
+        if self.cap.isOpened():
+            cur_time = datetime.now()
+            ret, frame = self.cap.read()
+            if ret:
+                time_elapsed = (cur_time - self.prev).total_seconds() * 1000
+                # add GaussianBlur to remove noises
+                frame = cv2.GaussianBlur(frame, (1, 1), 0)
+                height, width = frame.shape[:2] 
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                faces = self.faceCascade.detectMultiScale(gray, minNeighbors=5, scaleFactor=1.1)
+                cv2.rectangle(frame, (0,height-50) , (200,height) , (0,0,0) , thickness=cv2.FILLED )
 
-def endCapturing():
-    global capturing
-    global cap
-    e.set()
-    p.join()
-    capturing = False
-    cap.release()
-    cv2.destroyAllWindows()
+                for (x,y,w,h) in faces:
+                    cv2.rectangle(frame, (x,y), (x+w,y+h), (255,0,0), 2)
+                    roi_gray = gray[y:y+h, x:x+w]
+                    roi_color = frame[y:y+h, x:x+w]
+                    self.score = self.preprocessing(frame, roi_gray, roi_color, self.score)
+                    if not self.score:
+                        self.prev = datetime.now()
+                    if time_elapsed > threshold and self.score:
+                        if alarmFilePath:
+                            playsound(alarmFilePath)
+                        else:
+                            playsound(os.path.join(THIS_FOLDER, 'data/alarm.wav'))
+                        self.score = False
+                        self.prev = datetime.now()
 
-def start_recording_proc():
-    global p
-    p = multiprocessing.Process(target=captureVideo, args=(e,))
-    p.start()
 
-main = tk.Tk()
-ws = main.winfo_screenwidth() 
-hs = main.winfo_screenheight()
-w = int(ws*0.7)
-h = int(hs*0.7)
-main.geometry("{}x{}".format(w,h)) #set window size
-x = (ws/2) - (w/2)
-y = (hs/2) - (h/2)
-main.geometry('+%d+%d' % (x, y))
+                    break
+                # Return a boolean success flag and the current frame converted to BGR
+                return (ret, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+            else:
+                return (ret, None)
+        else:
+            return (ret, None)
 
-start_btn = tk.Button(main, text="َشروع", command=start_recording_proc)
-start_btn.pack()
+        # Release the video source when the object is destroyed
+    def __del__(self):
+        if self.cap.isOpened():
+            self.cap.release()
+            cv2.destroyAllWindows()
 
-end_btn = tk.Button(main, text="پایان", command=endCapturing)
-end_btn.pack()
+def main():
+    # Create a window and pass it to the Application object
+    App(tk.Tk(),'تشخیص خواب‌آلودگی رانندگان')
 
-main.mainloop()
+main()
